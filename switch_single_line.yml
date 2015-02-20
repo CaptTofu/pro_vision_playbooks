@@ -1,0 +1,9 @@
+# file: switch.yml
+- hosts: switch1
+  tasks:
+  - name: gather facts from switch
+    pro_vision:
+     gather_facts=true
+     host={{ switch_host }}
+     username={{ switch_user }}
+     password={{ switch_password }}

@@ -1,0 +1,17 @@
+# file: switch_vlan_create_modify.yml
+- hosts: switch1
+  tasks:
+  - name: gather facts from switch
+    pro_vision:
+      host={{ switch_host }}
+      username={{ switch_user }}
+      password={{ switch_password }}
+
+  - name: create VLAN_44
+    pro_vision_vlan:
+      host={{ switch_host }}
+      username={{ switch_user }}
+      password={{ switch_password }}
+      state=present
+      vlan_id=44
+      vlan_name=VLAN_44
