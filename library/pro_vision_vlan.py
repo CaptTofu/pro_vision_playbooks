@@ -73,28 +73,16 @@ options:
         default: Must be a valid numeric ID
         description:
             - ID of VLAN
-    tagged_port_type:
-        required: false
-        choices: [ trunk, hybrid]
-        default: trunk
-        description:
-            - Type that all tagged ports will be given
-    untagged_port_type:
-        required: false
-        choices: [ access, hybrid]
-        default: access
-        description:
-            - Type that all untagged port will be given
-    tagged_ports:
+    tagged:
         required: false
         default: None
         description:
-            - List of tagged ports
-    untagged_ports:
+            - List of tagged ports e.g. 1-5,6,7,10
+    untagged:
         required: false
         default: None
         description:
-            - List of untagged ports
+            - List of untagged ports e.g. 1-5,6,7,10
 '''
 
 EXAMPLES = '''
@@ -112,46 +100,24 @@ EXAMPLES = '''
       state: present
       name: VLAN 11
       id: 11
-      interface_type: access
-      tagged: false
-      interfaces:
-      - 1-25 
+      ipv4: 
+        - 192.168.3.1/255.255.255.0
+        - 192.168.4.1/255.255.255.0
+      tagged: 1-10 
+      untagged: 11,13,14-17
 
 OR
 
 - hosts: localhost
   tasks:
   - name: create VLAN 11
-    pro_vision_vlan: host=192.168.1.100 username=operator password=ckrit state=present vlan_name="VLAN 11" vlan_id=11 untagged_port_type: access untagged_interfaces=1-25
+    pro_vision_vlan: host=192.168.1.100 username=operator password=ckrit state=present vlan_name="VLAN 11" vlan_id=11 pv4=192.168.3.1/255.255.255.0,192.168.4.1/255.255.255.0 tagged=1-10 untagged=11,13,14-17
 
 '''
 
-EXAMPLES = '''
-
-# file: switch.yml
-- hosts: localhost
-  tasks:
-  - name: get facts for the switch
-    local_action:
-      module: pro_vision_vlan
-      developer-mode: true
-      host: 192.168.1.100
-      username: operator 
-      password: ckrit
-
-# OR
-
-# file: switch.yml
-- hosts: localhost
-  tasks:
-  - name: gather facts from switch
-    pro_vision_vlan: host=192.168.1.100 username=operator password=ckrit
-
-'''
-
-# http://code.patg.net/pro_vision.tar.gz
 from pro_vision import ProVision 
 from ansible.module_utils.basic import *
+
 import pprint 
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -163,24 +129,23 @@ class ProVisionVlan(ProVision):
         return facts
 
     def _handle_vlan(self):
-        l.write("dispatch()\n")
-        l.flush()
         facts = self.get_facts()
-        l.write("%s\n" % pp.pformat(facts))
         state = self.module.params.get('state')
         vlan = {'vlan_id': self.module.params.get('vlan_id'),
                 'vlan_name': self.module.params.get('vlan_name'),
-                'tagged_port_type': self.module.params.get('tagged_port_type'),
-                'untagged_port_type':
-                self.module.params.get('untagged_port_type'),
-                'tagged_ports': self.module.params.get('tagged_ports'),
-                'untagged_ports': self.module.params.get('untagged_ports'),
-                'state': self.module.params.get('state'),
-                'interfaces': self.module.params.get('interfaces')}
+                'ipv4': self.module.params.get('ipv4'),
+                'tagged': self.module.params.get('tagged'),
+                'untagged': self.module.params.get('untagged'),
+                'state': self.module.params.get('state') }
+
+        l.write("vlan: %s\n" % pp.pformat(vlan))
+        l.flush()
+
         if vlan['state'] == 'absent':
             facts = self._delete_vlan(facts, vlan['vlan_id'])
         else:
             facts = self._save_vlan(facts, vlan)
+
         # After adding or deleting vlan, save
         if self.module.params.get('save') is True:
             self.save()
@@ -191,8 +156,33 @@ class ProVisionVlan(ProVision):
         if vlan_id not in facts['running']['vlans']:
             return False
         existing_vlan = facts['running']['vlans'][vlan_id]
-        if vlan['vlan_name'] != existing_vlan['vlan_name']:
+        l.write("existing_vlan %s\n" % pp.pformat(existing_vlan))
+        l.flush()
+        for key in ('vlan_name', 'tagged', 'untagged'):
+            l.write("checking key %s\n" % key)
+            l.flush()
+            if key in vlan and key in existing_vlan:
+               if vlan[key] != existing_vlan[key]:
+                   return True
+            else:
+                return True
+            l.write("done checking key %s\n" % key)
+            l.flush()
+
+        # if the list of IPs changed...
+        if len(vlan['ipv4']) != len(existing_vlan['ipv4']):
             return True
+        if len(vlan['ipv4']):
+            for ip in vlan['ipv4']:
+                if ip not in existing_vlan['ipv4']:
+                    return True
+        if len(existing_vlan['ipv4']):
+            for ip in existing_vlan['ipv4']:
+                if ip not in vlan['ipv4']:
+                    return True
+
+        return False
+
 
     def _save_vlan(self, facts, vlan):
         # if something has changed, best to delete then recreate
@@ -214,14 +204,28 @@ class ProVisionVlan(ProVision):
         self._exec_command("vlan %s\n" % vlan_id,
                            "ERROR: unable to enter VLAN ID")
         # if user doesn't assign, name assigned by switch 000${vlan_id}
-        if length(vlan['vlan_name']):
+        if vlan['vlan_name'] != None and len(vlan['vlan_name']):
             self._exec_command("name %s\n" % vlan['vlan_name'],
-                               "ERROR: unable to enter VLAN name %s" % vlan['vlan_name'])
+                               "ERROR: unable to enter VLAN name %s" %
+                               vlan['vlan_name'])
 
         # set IP if specified
-        if length(vlan['ipv4']): 
-            self._exec_command("ip address %s\n" % vlan['ipv4'], 
-                               "ERROR: unable to set address for vlan %s" % vlan['ipv4'])
+        if len(vlan['ipv4']): 
+            for ip in vlan['ipv4']:
+                l.write("ip address %s\n" % ip)
+                l.flush()
+                self._exec_command("ip address %s\n" % ip, 
+                                   "ERROR: unable to set address %s for vlan %s" %
+                                   (ip, vlan_id))
+
+        # set tagged if specified
+        for key in ('tagged', 'untagged'):
+            if vlan[key] != None and len(vlan[key]): 
+                l.write("checking key %s\n" % key)
+                l.flush()
+                self._exec_command("%s %s\n" % (key, vlan[key]), 
+                                   "ERROR: unable to set %s ports for vlan %s" %
+                                   (key, vlan['ipv4']))
 
         # leave interface view
         self._exit()
@@ -288,15 +292,16 @@ def main():
             host=dict(required=True),
             vlan_id=dict(required=True, type='int'),
             vlan_name=dict(required=False),
+            ipv4=dict(required=False, type='list', default=[]),
+            tagged=dict(required=False),
+            untagged=dict(required=False),
             gather_facts=dict(required=False, type='bool', default='True'),
-            timeout=dict(default=30, type='int'),
-            port=dict(default=22, type='int'),
+            timeout=dict(require=False, default=30, type='int'),
+            port=dict(required=False, default=22, type='int'),
             private_key_file=dict(required=False)
         ),
         supports_check_mode=True,
     )
-    l.write("module started\n")
-    l.flush()
 
     failed = False
 
