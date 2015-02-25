@@ -37,7 +37,7 @@ options:
         default: false
         choices: [ false, true ]
         description:
-            - if true, all changes will be written. Upon reboot, save
+            - if true, ensures startup config is the same as running config (persists reboot) 
     startup_cfg:
         required: false
         default: startup.cfg
@@ -98,6 +98,7 @@ EXAMPLES = '''
       username: operator 
       password: ckrit
       state: present
+      save: true
       name: VLAN 11
       id: 11
       ipv4: 
@@ -138,6 +139,9 @@ class ProVisionVlan(ProVision):
                 'untagged': self.module.params.get('untagged'),
                 'state': self.module.params.get('state') }
 
+        vlan['tagged'] = self._cleanup_port_listing(vlan['tagged'])
+        vlan['untagged'] = self._cleanup_port_listing(vlan['untagged'])
+        
         l.write("vlan: %s\n" % pp.pformat(vlan))
         l.flush()
 
@@ -147,6 +151,8 @@ class ProVisionVlan(ProVision):
             facts = self._save_vlan(facts, vlan)
 
         # After adding or deleting vlan, save
+        l.write("save value is %s\n" % self.module.params.get('save'))
+        l.flush()
         if self.module.params.get('save') is True:
             self.save()
         return facts
@@ -163,22 +169,32 @@ class ProVisionVlan(ProVision):
             l.flush()
             if key in vlan and key in existing_vlan:
                if vlan[key] != existing_vlan[key]:
+                   l.write("key: %s %s != %s\n" % (key, vlan[key], existing_vlan[key]))
+                   l.flush()
                    return True
             else:
+                l.write("key: %s not in vlan or existing_vlan\n") 
+                l.flush()
                 return True
             l.write("done checking key %s\n" % key)
             l.flush()
 
         # if the list of IPs changed...
         if len(vlan['ipv4']) != len(existing_vlan['ipv4']):
+            l.write("ipv4 %s != %s\n", (vlan['ipv4'], existing_vlan['ipv4']))
+            l.flush()
             return True
         if len(vlan['ipv4']):
             for ip in vlan['ipv4']:
                 if ip not in existing_vlan['ipv4']:
+                    l.write("ipv4 %s in vlan but not in existing_vlan\n", ip)
+                    l.flush()
                     return True
         if len(existing_vlan['ipv4']):
             for ip in existing_vlan['ipv4']:
                 if ip not in vlan['ipv4']:
+                    l.write("ipv4 %s in existing_vlan but not in vlan\n", ip)
+                    l.flush()
                     return True
 
         return False
@@ -237,7 +253,7 @@ class ProVisionVlan(ProVision):
             self.append_message("VLAN ID %s created\n" % vlan_id)
         else:
             self.append_message("Unable to create VLAN ID %s\n" % vlan_id)
-
+        
         return facts
 
     def _delete_vlan(self, facts, vlan_id):
@@ -313,8 +329,6 @@ def main():
                          changed=False,
                          msg=err_msg,
                          ansible_facts={})
-    l.write("ProVision_Facts\n")
-    l.flush()
     switch = ProVisionVlan(module,
                            host=module.params.get('host'),
                            username=module.params.get('username'),
