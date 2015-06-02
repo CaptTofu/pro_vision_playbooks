@@ -18,13 +18,18 @@
 # You should have received a copy of the GNU General Public License
 # along with this software.  If not, see <http://www.gnu.org/licenses/>.
 
+# Note: this code is currently under development and is full of debug code that
+# writes to a text file in /tmp.
+# This debug will be removed soon
+#
+
 DOCUMENTATION = '''
 ---
-module: pro_vision
+module: pro_vision_facts
 version_added: 0.1
 author: Patrick Galbraith
 short_description: Basic management of Pro Vision-based HP Switches
-requirements: [ paramiko pro_vision (http://code.patg.net/pro_vision.tar.gz)]
+requirements: [ pro_vision_ansible (http://code.patg.net/pro_vision_ansible.tar.gz)]
 description:
     - Basic management of Pro Vision-based Switches
 options:
@@ -67,7 +72,7 @@ EXAMPLES = '''
   tasks:
   - name: get facts for the switch
     local_action:
-      module: pro_vision
+      module: pro_vision_facts
       developer-mode: true
       host: 192.168.1.100
       username: admin
@@ -84,7 +89,7 @@ EXAMPLES = '''
 '''
 
 # http://code.patg.net/pro_vision.tar.gz
-from pro_vision import ProVision 
+from pro_vision_ansible import ProVision
 from ansible.module_utils.basic import *
 
 l = open('/tmp/provision.log', 'wb')

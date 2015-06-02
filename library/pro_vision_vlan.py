@@ -22,7 +22,7 @@ module: pro_vision_vlan
 version_added: 0.1
 author: Patrick Galbraith
 short_description: Basic management of Pro Vision-based HP Switches
-requirements: [ paramiko pro_vision (http://code.patg.net/pro_vision.tar.gz)]
+requirements: [ pro_vision_ansible (http://code.patg.net/pro_vision.tar.gz)]
 description:
     - Create, modify, and delete VLANs on Pro Vision-based Switches
 options:
@@ -37,7 +37,7 @@ options:
         default: false
         choices: [ false, true ]
         description:
-            - if true, ensures startup config is the same as running config (persists reboot) 
+            - if true, ensures startup config is the same as running config (persists reboot)
     startup_cfg:
         required: false
         default: startup.cfg
@@ -95,16 +95,16 @@ EXAMPLES = '''
       module: pro_vision_vlan
       developer-mode: true
       host: 192.168.1.100
-      username: operator 
+      username: operator
       password: ckrit
       state: present
       save: true
       name: VLAN 11
       id: 11
-      ipv4: 
+      ipv4:
         - 192.168.3.1/255.255.255.0
         - 192.168.4.1/255.255.255.0
-      tagged: 1-10 
+      tagged: 1-10
       untagged: 11,13,14-17
 
 OR
@@ -116,22 +116,30 @@ OR
 
 '''
 
-from pro_vision import ProVision 
+from pro_vision_ansible import ProVision
 from ansible.module_utils.basic import *
 
-import pprint 
+import pprint
 pp = pprint.PrettyPrinter(indent=4)
 
-l = open('/tmp/provision.log', 'wb')
+l = open('/tmp/pro_vision_vlan.log', 'wb')
 
 class ProVisionVlan(ProVision):
     def dispatch(self):
-        facts = self._handle_vlan()
+        l.write("dispatch()\n")
+        l.flush()
+        facts = self.handle_vlan()
         return facts
 
-    def _handle_vlan(self):
+    def handle_vlan(self):
+        l.write("handle_vlan()\n")
+        l.flush()
         facts = self.get_facts()
+        l.write("%s\n" % pp.pformat(facts))
+        l.flush()
         state = self.module.params.get('state')
+        l.write("state: %s\n" % state)
+        l.flush()
         vlan = {'vlan_id': self.module.params.get('vlan_id'),
                 'vlan_name': self.module.params.get('vlan_name'),
                 'ipv4': self.module.params.get('ipv4'),
@@ -139,25 +147,28 @@ class ProVisionVlan(ProVision):
                 'untagged': self.module.params.get('untagged'),
                 'state': self.module.params.get('state') }
 
-        vlan['tagged'] = self._cleanup_port_listing(vlan['tagged'])
-        vlan['untagged'] = self._cleanup_port_listing(vlan['untagged'])
-        
+        if vlan['tagged'] is not None:
+            vlan['tagged'] = self._cleanup_port_listing(vlan['tagged'])
+        if vlan['untagged'] is not None:
+            vlan['untagged'] = self._cleanup_port_listing(vlan['untagged'])
+
         l.write("vlan: %s\n" % pp.pformat(vlan))
         l.flush()
 
         if vlan['state'] == 'absent':
-            facts = self._delete_vlan(facts, vlan['vlan_id'])
+            l.write("call delete_vlan()\n")
+            facts = self.delete_vlan(facts, vlan['vlan_id'])
         else:
-            facts = self._save_vlan(facts, vlan)
+            l.write("call save_vlan()\n")
+            facts = self.save_vlan(facts, vlan)
 
         # After adding or deleting vlan, save
-        l.write("save value is %s\n" % self.module.params.get('save'))
-        l.flush()
         if self.module.params.get('save') is True:
             self.save()
         return facts
 
-    def _vlan_changed(self, facts, vlan):
+    def vlan_changed(self, facts, vlan):
+        l.write("vlan_changed()\n")
         vlan_id = str(vlan['vlan_id'])
         if vlan_id not in facts['running']['vlans']:
             return False
@@ -173,7 +184,7 @@ class ProVisionVlan(ProVision):
                    l.flush()
                    return True
             else:
-                l.write("key: %s not in vlan or existing_vlan\n") 
+                l.write("key: %s not in vlan or existing_vlan\n")
                 l.flush()
                 return True
             l.write("done checking key %s\n" % key)
@@ -200,10 +211,10 @@ class ProVisionVlan(ProVision):
         return False
 
 
-    def _save_vlan(self, facts, vlan):
+    def save_vlan(self, facts, vlan):
         # if something has changed, best to delete then recreate
-        if self._vlan_changed(facts, vlan):
-            facts = self._delete_vlan(facts, vlan['vlan_id'])
+        if self.vlan_changed(facts, vlan):
+            facts = self.delete_vlan(facts, vlan['vlan_id'])
         self.set_changed(False)
 
         # TODO: add error handling here
@@ -217,34 +228,34 @@ class ProVisionVlan(ProVision):
         # enter global config
         self._enter_config_level()
 
-        self._exec_command("vlan %s\n" % vlan_id,
+        self.sw.exec_command("vlan %s\n" % vlan_id,
                            "ERROR: unable to enter VLAN ID")
         # if user doesn't assign, name assigned by switch 000${vlan_id}
         if vlan['vlan_name'] != None and len(vlan['vlan_name']):
-            self._exec_command("name %s\n" % vlan['vlan_name'],
+            self.sw.exec_command("name %s\n" % vlan['vlan_name'],
                                "ERROR: unable to enter VLAN name %s" %
                                vlan['vlan_name'])
 
         # set IP if specified
-        if len(vlan['ipv4']): 
+        if len(vlan['ipv4']):
             for ip in vlan['ipv4']:
                 l.write("ip address %s\n" % ip)
                 l.flush()
-                self._exec_command("ip address %s\n" % ip, 
+                self.sw.exec_command("ip address %s\n" % ip,
                                    "ERROR: unable to set address %s for vlan %s" %
                                    (ip, vlan_id))
 
         # set tagged if specified
         for key in ('tagged', 'untagged'):
-            if vlan[key] != None and len(vlan[key]): 
+            if vlan[key] != None and len(vlan[key]):
                 l.write("checking key %s\n" % key)
                 l.flush()
-                self._exec_command("%s %s\n" % (key, vlan[key]), 
+                self.sw.exec_command("%s %s\n" % (key, vlan[key]),
                                    "ERROR: unable to set %s ports for vlan %s" %
                                    (key, vlan['ipv4']))
 
         # leave interface view
-        self._exit()
+        self.exit()
 
         # refresh facts to confirm if the new vlan shows up
         facts = self.get_facts()
@@ -253,12 +264,12 @@ class ProVisionVlan(ProVision):
             self.append_message("VLAN ID %s created\n" % vlan_id)
         else:
             self.append_message("Unable to create VLAN ID %s\n" % vlan_id)
-        
+
         return facts
 
-    def _delete_vlan(self, facts, vlan_id):
+    def delete_vlan(self, facts, vlan_id):
         self.set_changed(False)
-        l.write("_delete_vlan() vlan_id %d\n" % vlan_id)
+        l.write("delete_vlan() vlan_id %d\n" % vlan_id)
         l.flush()
         if type(vlan_id) is not int:
             self.set_failed(True)
@@ -278,7 +289,7 @@ class ProVisionVlan(ProVision):
             return facts
 
         self._enter_config_level()
-        self._exec_command("no vlan %s\n" % vlan_id,
+        self.sw.exec_command("no vlan %s\n" % vlan_id,
                            "Unable to delete vlan %s" % vlan_id)
 
         # refresh facts
@@ -290,7 +301,7 @@ class ProVisionVlan(ProVision):
         else:
             self.append_message("Unable to delete VLAN ID %s\n" % vlan_id)
 
-        self._exit()
+        self.exit()
 
         return facts
 
